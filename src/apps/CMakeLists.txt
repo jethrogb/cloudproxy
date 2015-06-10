@@ -26,3 +26,6 @@ target_link_libraries(encode_auth tao)
 
 add_executable(go_child go_child.cc)
 target_link_libraries(go_child tao)
+
+add_library(tao-c SHARED c-bindings.cc)
+target_link_libraries(tao-c tao)
