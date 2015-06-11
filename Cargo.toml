@@ -1,0 +1,10 @@
+[package]
+name = "tao"
+version = "0.1.0"
+authors = ["Jethro Beekman <jethro@jbeekman.nl>"]
+
+build = "build.rs"
+links = "tao"
+
+[dependencies]
+libc = "0.1"
