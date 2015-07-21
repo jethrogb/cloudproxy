@@ -26,3 +26,12 @@ target_link_libraries(encode_auth tao)
 
 add_executable(go_child go_child.cc)
 target_link_libraries(go_child tao)
+
+add_executable(seal seal.cc)
+target_link_libraries(seal tao)
+
+add_executable(unseal unseal.cc)
+target_link_libraries(unseal tao)
+
+add_executable(randhex randhex.cc)
+target_link_libraries(randhex tao)
