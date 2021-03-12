@@ -1,0 +1,45 @@
+#
+source ./defines
+
+if [[ -e $DOMAINTPM1/SimpleDomainService ]]
+then
+  echo "$DOMAINTPM1/SimpleDomainService exists"
+  rm $DOMAINTPM1/SimpleDomainService/*
+else
+  mkdir $DOMAINTPM1/SimpleDomainService
+  echo "$DOMAINTPM1/SimpleDomainService created"
+fi
+
+if [[ -e $DOMAINTPM1/SimpleClient ]]
+then
+  echo "$DOMAINTPM1/SimpleClient exists"
+  rm $DOMAINTPM1/SimpleClient/*
+else
+  mkdir $DOMAINTPM1/SimpleClient
+  echo "$DOMAINTPM1/SimpleClient created"
+fi
+
+if [[ -e $DOMAINTPM1/SimpleClientCpp ]]
+then
+  echo "$DOMAINTPM1/SimpleClientCpp exists"
+  rm $DOMAINTPM1/SimpleClientCpp/*
+else
+  mkdir $DOMAINTPM1/SimpleClientCpp
+  echo "$DOMAINTPM1/SimpleClientCpp created"
+fi
+
+if [[ -e $DOMAINTPM1/SimpleServer ]]
+then
+  echo "$DOMAINTPM1/SimpleServer exists"
+  rm $DOMAINTPM1/SimpleServer/*
+else
+  mkdir $DOMAINTPM1/SimpleServer
+  echo "$DOMAINTPM1/SimpleServer created"
+fi
+
+$BINPATH/tao domain init -tao_domain $DOMAINTPM1 -config_template $TEMPLATETPM1 -pub_domain_address "127.0.0.1" -pass xxx
+
+# Replace with aiksigner?
+$BINPATH/genaik -blob $DOMAINTPM1/aikblob
+$BINPATH/aiksigner -aik_path $DOMAINTPM1/aikblob -policy_key_path $DOMAINTPM1 \
+-password xxx -output_file $DOMAINTPM1/aik_cert

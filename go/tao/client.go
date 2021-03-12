@@ -19,6 +19,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"net"
 	"time"
@@ -64,7 +65,17 @@ func generateX509() (*Keys, *tls.Certificate, error) {
 	}
 
 	// TODO(tmroeder): fix the name
-	cert, err := keys.SigningKey.CreateSelfSignedX509(&pkix.Name{
+	signerAlg := SignerTypeFromSuiteName(TaoCryptoSuite)
+	if signerAlg == nil {
+		return nil, nil, errors.New("Cant get signer alg from ciphersuite")
+	}
+	pkInt := PublicKeyAlgFromSignerAlg(*signerAlg)
+	skInt := SignatureAlgFromSignerAlg(*signerAlg)
+	if pkInt < 0 || skInt < 0 {
+		return nil, nil, errors.New("Cant get x509 signer alg from signer alg")
+	}
+
+	cert, err := keys.SigningKey.CreateSelfSignedX509(pkInt, skInt, 1, &pkix.Name{
 		Organization: []string{"Google Tao Demo"}})
 	if err != nil {
 		return nil, nil, err
@@ -112,41 +123,54 @@ func DialTLSWithKeys(network, addr string, keys *Keys) (net.Conn, error) {
 	return conn, err
 }
 
-// Dial connects to a Tao TLS server, performs a TLS handshake, and exchanges
-// Attestation values with the server, checking that this is a Tao server
-// that is authorized to Execute. It uses a Tao Guard to perform this check.
-func Dial(network, addr string, guard Guard, v *Verifier) (net.Conn, error) {
+// DialWithNewX509 connects to a Tao TLS server, performs a TLS handshake, and
+// exchanges Attestation values with the server, checking that this is a Tao
+// server that is authorized to Execute. It uses a Tao Guard to perform this
+// check.
+func DialWithNewX509(network, addr string, guard Guard, v *Verifier) (net.Conn, error) {
 	keys, _, err := generateX509()
 	if err != nil {
 		return nil, fmt.Errorf("client: can't create key and cert: %s\n", err.Error())
 	}
 
-	return DialWithKeys(network, addr, guard, v, keys)
+	return Dial(network, addr, guard, v, keys)
 }
 
-// DialWithKeys connects to a Tao TLS server using an existing set of keys.
-func DialWithKeys(network, addr string, guard Guard, v *Verifier, keys *Keys) (net.Conn, error) {
-	if keys.Cert == nil {
-		return nil, fmt.Errorf("client: can't dial with an empty client certificate\n")
-	}
-	tlsCert, err := EncodeTLSCert(keys)
-	if err != nil {
-		return nil, err
-	}
-	conn, err := tls.Dial(network, addr, &tls.Config{
+// Dial connects to a Tao TLS server, performs a TLS handshake, and verifies
+// the Attestation value of the server, checking that the server is authorized
+// to execute. If keys are provided (keys!=nil), then it sends an attestation
+// of its identity to the peer.
+func Dial(network, addr string, guard Guard, v *Verifier, keys *Keys) (net.Conn, error) {
+	tlsConfig := &tls.Config{
 		RootCAs:            x509.NewCertPool(),
-		Certificates:       []tls.Certificate{*tlsCert},
 		InsecureSkipVerify: true,
-	})
+	}
+
+	// Set up certificate for two-way authentication.
+	if keys != nil {
+		if keys.Cert == nil {
+			return nil, fmt.Errorf("client: can't dial with an empty client certificate\n")
+		}
+		tlsCert, err := EncodeTLSCert(keys)
+		if err != nil {
+			return nil, err
+		}
+		tlsConfig.Certificates = []tls.Certificate{*tlsCert}
+	}
+
+	conn, err := tls.Dial(network, addr, tlsConfig)
 	if err != nil {
 		return nil, err
 	}
 
-	// Tao handshake: send client delegation.
 	ms := util.NewMessageStream(conn)
-	if _, err = ms.WriteMessage(keys.Delegation); err != nil {
-		conn.Close()
-		return nil, err
+
+	// Two-way Tao handshake: send client delegation.
+	if keys != nil {
+		if _, err = ms.WriteMessage(keys.Delegation); err != nil {
+			conn.Close()
+			return nil, err
+		}
 	}
 
 	// Tao handshake: read server delegation.
@@ -172,7 +196,7 @@ func DialWithKeys(network, addr string, guard Guard, v *Verifier, keys *Keys) (n
 }
 
 // AddEndorsements reads the SerializedEndorsements in an attestation and adds
-// the ones that are predicates signed by the policy key.
+// the ones that are predicates signed by a guard's policy key.
 func AddEndorsements(guard Guard, a *Attestation, v *Verifier) error {
 	// Before validating against the guard, check to see if there are any
 	// predicates endorsed by the policy key. This allows truncated principals
@@ -200,22 +224,19 @@ func AddEndorsements(guard Guard, a *Attestation, v *Verifier) error {
 			return fmt.Errorf("the message in an endorsement must be a predicate")
 		}
 
-		signerPrin, err := auth.UnmarshalPrin(ea.Signer)
-		if err != nil {
-			return err
-		}
+		signerPrin := auth.NewPrin(*ea.SignerType, ea.SignerKey)
 
 		if !signerPrin.Identical(says.Speaker) {
-			return fmt.Errorf("the speaker of an endorsement must be the signer")
+			return fmt.Errorf("the speaker of an endorsement must be the signer: %v vs %v", signerPrin, says.Speaker)
 		}
 		if !v.ToPrincipal().Identical(signerPrin) {
-			return fmt.Errorf("the signer of an endorsement must be the policy key")
+			return fmt.Errorf("the signer of an endorsement must be the guard's policy key")
 		}
 		if ok, err := v.Verify(ea.SerializedStatement, AttestationSigningContext, ea.Signature); (err != nil) || !ok {
 			return fmt.Errorf("the signature on an endorsement didn't pass verification")
 		}
 
-		guard.AddRule(pred.String())
+		return guard.AddRule(pred.String())
 	}
 
 	return nil

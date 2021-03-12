@@ -16,7 +16,10 @@ package tao
 
 import (
 	"crypto/rand"
+	"crypto/x509"
+	"errors"
 
+	"github.com/golang/protobuf/proto"
 	"github.com/jlmucb/cloudproxy/go/tao/auth"
 )
 
@@ -27,7 +30,7 @@ type RootHost struct {
 }
 
 // NewTaoRootHostFromKeys returns a RootHost that uses these keys.
-func NewTaoRootHostFromKeys(k *Keys) (Host, error) {
+func NewTaoRootHostFromKeys(k *Keys) (*RootHost, error) {
 	if k.SigningKey == nil || k.CryptingKey == nil || k.VerifyingKey == nil {
 		return nil, newError("missing required key for RootHost")
 	}
@@ -42,13 +45,22 @@ func NewTaoRootHostFromKeys(k *Keys) (Host, error) {
 
 // NewTaoRootHost generates a new RootHost with a fresh set of temporary
 // keys.
-func NewTaoRootHost() (Host, error) {
+func NewTaoRootHost() (*RootHost, error) {
 	k, err := NewTemporaryKeys(Signing | Crypting)
 	if err != nil {
 		return nil, err
 	}
 
 	return NewTaoRootHostFromKeys(k)
+}
+
+// LoadCert loads a given cert into the root host key.
+func (t *RootHost) LoadCert(cert *x509.Certificate) {
+	t.keys.Cert = cert
+}
+
+func (t *RootHost) GetVerifier() *Verifier {
+	return t.keys.VerifyingKey
 }
 
 // GetRandomBytes returns a slice of n random bytes.
@@ -92,7 +104,14 @@ func (t *RootHost) Attest(childSubprin auth.SubPrin, issuer *auth.Prin,
 
 	stmt := auth.Says{Speaker: *issuer, Time: time, Expiration: expiration, Message: message}
 
-	return GenerateAttestation(t.keys.SigningKey, nil /* delegation */, stmt)
+	att, err := GenerateAttestation(t.keys.SigningKey, nil /* delegation */, stmt)
+	if err != nil {
+		return nil, err
+	}
+	if t.keys.Cert != nil {
+		att.RootEndorsement = t.keys.Cert.Raw
+	}
+	return att, nil
 }
 
 // Encrypt data so that only this host can access it.
@@ -122,4 +141,54 @@ func (t *RootHost) RemovedHostedProgram(childSubprin auth.SubPrin) error {
 // Tao hosts, to this hosted Tao host.
 func (t *RootHost) HostName() auth.Prin {
 	return t.taoHostName
+}
+
+func (s *RootHost) InitCounter(label string, c int64) error {
+	softtao_counter = c
+	return nil
+}
+
+func (s *RootHost) GetCounter(label string) (int64, error) {
+	return softtao_counter, nil
+}
+
+func (s *RootHost) RollbackProtectedSeal(label string, data []byte, policy string) ([]byte, error) {
+	// TODO(jlm): Add counter to root_host struct instead?
+	softtao_counter = softtao_counter + 1
+	sd := new(RollbackSealedData)
+	sd.Entry = new(RollbackEntry)
+	programName := ""
+	sd.Entry.HostedProgramName = &programName
+	sd.Entry.EntryLabel = &label
+	sd.Entry.Counter = &softtao_counter
+	sd.ProtectedData = data
+	toSeal, err := proto.Marshal(sd)
+	if err != nil {
+		return nil, errors.New("Can't marshall roothost rollback data")
+	}
+	sealed, err := s.Encrypt(toSeal)
+	if err != nil {
+		return nil, errors.New("Can't encrypt roothost rollback data")
+	}
+	return sealed, nil
+}
+
+func (s *RootHost) RollbackProtectedUnseal(sealed []byte) ([]byte, string, error) {
+	c, err := s.GetCounter("label")
+	if err != nil {
+		c = int64(0)
+	}
+	b, err := s.Decrypt(sealed)
+	if err != nil {
+		return nil, "", errors.New("Can't decrypt roothost rollback data")
+	}
+	var sd RollbackSealedData
+	err = proto.Unmarshal(b, &sd)
+	if err != nil {
+		return nil, "", errors.New("RollbackProtectedUnseal can't Unmarshal")
+	}
+	if sd.Entry == nil || sd.Entry.Counter == nil || *sd.Entry.Counter != c {
+		return nil, "", errors.New("RollbackProtectedUnseal bad counter")
+	}
+	return sd.ProtectedData, "", nil
 }

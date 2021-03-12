@@ -16,6 +16,7 @@ package tao
 
 import (
 	"fmt"
+	"errors"
 	"io/ioutil"
 	"os"
 	"path"
@@ -25,6 +26,27 @@ import (
 	"github.com/golang/protobuf/proto"
 	"github.com/jlmucb/cloudproxy/go/tao/auth"
 )
+
+func generateSigner() (*Signer, error) {
+
+	keyName := "TestSigningKey"
+	keyEpoch := int32(1)
+	keyPurpose := "signing"
+	keyStatus := "active"
+	keyType := SignerTypeFromSuiteName(TaoCryptoSuite)
+	if keyType == nil {
+		return nil, errors.New("unsupported sealer crypter")
+	}
+	ck := GenerateCryptoKey(*keyType, &keyName, &keyEpoch, &keyPurpose, &keyStatus)
+	if ck == nil {
+		return nil, errors.New("Can't generate signing key")
+	}
+	s := SignerFromCryptoKey(*ck)
+	if s  == nil {
+		return nil, errors.New("Can't get signer from signing key")
+	}
+	return s, nil
+}
 
 func makeACLGuard() (*ACLGuard, *Keys, string, error) {
 	tmpDir, err := ioutil.TempDir("", "acl_guard_test")
@@ -43,10 +65,7 @@ func makeACLGuard() (*ACLGuard, *Keys, string, error) {
 	tg := NewACLGuard(keys.VerifyingKey, config)
 
 	// Add a bogus rule.
-	p := auth.Prin{
-		Type: "key",
-		Key:  auth.Bytes([]byte(`Fake key`)),
-	}
+	p := auth.NewKeyPrin([]byte(`Fake key`))
 	if err := tg.Authorize(p, "Write", []string{"filename"}); err != nil {
 		return nil, nil, "", err
 	}
@@ -66,18 +85,15 @@ func testNewACLGuard(t *testing.T, v *Verifier) (Guard, string) {
 }
 
 func TestACLGuardSaveACLs(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
-	p := auth.Prin{
-		Type: "key",
-		Key:  auth.Bytes([]byte(`Fake key`)),
-	}
+	p := auth.NewKeyPrin([]byte(`Fake key`))
 	if err := tg.Authorize(p, "Write", []string{"filename"}); err != nil {
 		t.Fatal("Couldn't authorize a simple operation:", err)
 	}
@@ -87,7 +103,7 @@ func TestACLGuardSaveACLs(t *testing.T) {
 	}
 
 	config := ACLGuardDetails{SignedAclsPath: proto.String(path.Join(tmpdir, "acls"))}
-	v := s.GetVerifier()
+	v := s.GetVerifierFromSigner()
 	aclg, err := LoadACLGuard(v, config)
 	if err != nil {
 		t.Fatal("Couldn't load the ACLs:", err)
@@ -103,12 +119,12 @@ func TestACLGuardSaveACLs(t *testing.T) {
 }
 
 func TestACLGuardEmptySave(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	if err := tg.Save(s); err != nil {
@@ -116,7 +132,7 @@ func TestACLGuardEmptySave(t *testing.T) {
 	}
 
 	config := ACLGuardDetails{SignedAclsPath: proto.String(path.Join(tmpdir, "acls"))}
-	v := s.GetVerifier()
+	v := s.GetVerifierFromSigner()
 	aclg, err := LoadACLGuard(v, config)
 	if err != nil {
 		t.Fatal("Couldn't load the ACLs:", err)
@@ -132,18 +148,15 @@ func TestACLGuardEmptySave(t *testing.T) {
 }
 
 func TestACLGuardAuthorize(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
-	p := auth.Prin{
-		Type: "key",
-		Key:  auth.Bytes([]byte(`Fake key`)),
-	}
+	p := auth.NewKeyPrin([]byte(`Fake key`))
 	if err := tg.Authorize(p, "Write", []string{"filename"}); err != nil {
 		t.Fatal("Couldn't authorize a simple operation:", err)
 	}
@@ -174,18 +187,15 @@ func TestACLGuardAuthorize(t *testing.T) {
 }
 
 func TestACLGuardDoubleAuthorize(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
-	p := auth.Prin{
-		Type: "key",
-		Key:  auth.Bytes([]byte(`Fake key`)),
-	}
+	p := auth.NewKeyPrin([]byte(`Fake key`))
 	if err := tg.Authorize(p, "Write", []string{"filename"}); err != nil {
 		t.Fatal("Couldn't authorize a simple operation:", err)
 	}
@@ -209,12 +219,12 @@ func TestACLGuardDoubleAuthorize(t *testing.T) {
 }
 
 func TestACLGuardAddRule(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	if err := tg.AddRule("Fake rule"); err != nil {
@@ -245,12 +255,12 @@ func TestACLGuardAddRule(t *testing.T) {
 }
 
 func TestACLGuardRetractRule(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	if err := tg.AddRule("Fake rule"); err != nil {
@@ -281,12 +291,12 @@ func TestACLGuardRetractRule(t *testing.T) {
 }
 
 func TestACLGuardRuleCount(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	count := 20
@@ -319,12 +329,12 @@ func TestACLGuardRuleCount(t *testing.T) {
 }
 
 func TestACLGuardGetRule(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	count := 20
@@ -348,12 +358,12 @@ func TestACLGuardGetRule(t *testing.T) {
 }
 
 func TestACLGuardRuleDebugString(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	count := 20
@@ -377,12 +387,12 @@ func TestACLGuardRuleDebugString(t *testing.T) {
 }
 
 func TestACLGuardString(t *testing.T) {
-	s, err := GenerateSigner()
+	s, err := generateSigner()
 	if err != nil {
 		t.Fatal("Couldn't generate a signer")
 	}
 
-	tg, tmpdir := testNewACLGuard(t, s.GetVerifier())
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
 	defer os.RemoveAll(tmpdir)
 
 	if err := tg.AddRule("0"); err != nil {
@@ -392,5 +402,37 @@ func TestACLGuardString(t *testing.T) {
 	ss := "ACLGuard{\n0\n}"
 	if tg.String() != ss {
 		t.Fatalf("Got the wrong string representation of the ACLGuard: expected '%s', but got '%s'", tg.String(), ss)
+	}
+}
+
+func TestACLGuardSignedSubprincipal(t *testing.T) {
+	s, err := generateSigner()
+	if err != nil {
+		t.Fatal("Couldn't generate a signer")
+	}
+
+	tg, tmpdir := testNewACLGuard(t, s.GetVerifierFromSigner())
+	defer os.RemoveAll(tmpdir)
+
+	p := auth.NewKeyPrin([]byte(`Fake key`))
+	if err := tg.Authorize(p, "Write", []string{"filename"}); err != nil {
+		t.Fatal("Couldn't authorize a simple operation:", err)
+	}
+	name := tg.Subprincipal().String()
+	k := s.ToPrincipal().String()
+	if name != ".ACLGuard("+k+")" {
+		t.Fatalf("ACL guard has wrong name: %v", name)
+	}
+}
+
+func TestACLGuardUnsignedSubprincipal(t *testing.T) {
+	g := NewACLGuard(nil, ACLGuardDetails{})
+	err := g.Authorize(subj, "read", []string{"somefile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := g.Subprincipal().String()
+	if name != ".ACLGuard([3ba9dc4681ad463d830d98e4a7c98c4fc909cce061cca19d1c9831ea1d9f5f48])" {
+		t.Fatalf("ACL guard has wrong name: %v", name)
 	}
 }

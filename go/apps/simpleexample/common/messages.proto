@@ -1,0 +1,48 @@
+//  Copyright (c) 2013, Google Inc.  All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+
+syntax = "proto2";
+package simpleexample_messages;
+
+enum MessageType {
+   REQUEST = 1;
+   RESPONSE = 2;
+ }
+
+message SimpleMessage {
+  required int32   message_type = 1;
+  required string  request_type = 2;
+  optional string  err = 3;
+  repeated bytes   data = 4;
+}
+
+message RsaPrivateKeyMessage {
+  optional bytes   m = 1;
+  optional bytes   e = 2;
+  optional bytes   d = 3;
+  optional bytes   p = 4;
+  optional bytes   q = 5;
+}
+
+// The cheap way
+message EcPrivateKeyMessage {
+  optional bytes der_blob = 1;
+}
+
+message PrivateKeyMessage {
+  required string key_type = 1;
+  optional RsaPrivateKeyMessage rsa_key = 2;
+  optional EcPrivateKeyMessage ec_key = 3;
+}
+

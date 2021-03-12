@@ -36,27 +36,6 @@ var HostTaoTypeMap = map[string]HostTaoType{
 	"stacked": Stacked,
 }
 
-// The HostTaoChannelType represents the type of the host Tao for a Stacked Tao.
-type HostTaoChannelType int
-
-// These constants given the different types of host Tao.
-const (
-	NoChannel HostTaoChannelType = iota
-	TPM
-	Pipe
-	File
-	Unix
-)
-
-// HostTaoChannelMap maps strings to the type of a host Tao channel.
-var HostTaoChannelMap = map[string]HostTaoChannelType{
-	"none": NoChannel,
-	"tpm":  TPM,
-	"pipe": Pipe,
-	"file": File,
-	"unix": Unix,
-}
-
 // The HostedProgramType represents the type of hosted programs and the channel
 // type used for communication between the Host and the Hosted Program.
 type HostedProgramType int
@@ -68,6 +47,7 @@ const (
 	ProcessPipe
 	DockerUnix
 	KVMCoreOSFile
+	KVMCustom
 )
 
 // HostedProgramTypeMap maps strings to the type of a hosted program.
@@ -76,20 +56,29 @@ var HostedProgramTypeMap = map[string]HostedProgramType{
 	"process":    ProcessPipe,
 	"docker":     DockerUnix,
 	"kvm_coreos": KVMCoreOSFile,
+	"kvm_custom": KVMCustom,
 }
 
 // A Config stores the information about the Tao, its Host Tao, and the way
 // it creates Hosted Programs.
 type Config struct {
 	HostType        HostTaoType
-	HostChannelType HostTaoChannelType
+	HostChannelType string
 	HostSpec        string
 	HostedType      HostedProgramType
 
 	// Variables for the TPM configuration
-	TPMAIKPath string
-	TPMPCRs    string
-	TPMDevice  string
+	TPMAIKPath     string
+	TPMAIKCertPath string
+	TPMPCRs        string
+	TPMDevice      string
+
+	TPM2InfoDir   string
+	TPM2PCRs      string
+	TPM2Device    string
+	TPM2EkCert    string
+	TPM2QuoteCert string
+	TPM2SealCert  string
 }
 
 // IsValid checks a Config for validity.
@@ -103,14 +92,14 @@ func (tc Config) IsValid() bool {
 	case NoHost:
 		return false
 	case Root:
-		if tc.HostChannelType != NoChannel || tc.HostType != NoHost {
+		if tc.HostChannelType != "" || tc.HostType != NoHost {
 			return false
 		}
 
 		// There are no constraints on the hosted-program types for a
 		// root Tao.
 	case Stacked:
-		if tc.HostChannelType == NoChannel || tc.HostSpec == "" {
+		if tc.HostChannelType == "" || tc.HostSpec == "" {
 			return false
 		}
 	default:
@@ -135,24 +124,20 @@ func NewConfigFromString(htt, htct, f, hpt, tpmaik, tpmpcrs, tpmdev string) Conf
 		tc.HostType = NoHost
 	}
 
-	switch htct {
-	case "none":
-		tc.HostChannelType = NoChannel
-	case "tpm":
-		tc.HostChannelType = TPM
+	tc.HostChannelType = htct
+	if htct == "tpm" {
 		// TODO(tmroeder): check the TPM variables here and add them to
 		// the config in some way.
 		tc.TPMAIKPath = tpmaik
 		tc.TPMPCRs = tpmpcrs
 		tc.TPMDevice = tpmdev
-	case "pipe":
-		tc.HostChannelType = Pipe
-	case "file":
-		tc.HostChannelType = File
-	case "unix":
-		tc.HostChannelType = Unix
-	default:
-		tc.HostChannelType = NoChannel
+	}
+	if htct == "tpm2" {
+		// tc.TPM2InfoDir string
+		tc.TPM2PCRs = tpmpcrs
+		tc.TPM2Device = tpmdev
+		// tc.TPM2EkCert string
+		// tc.TPM2QuoteCert string
 	}
 
 	if f != "" {
@@ -166,6 +151,8 @@ func NewConfigFromString(htt, htct, f, hpt, tpmaik, tpmpcrs, tpmdev string) Conf
 		tc.HostedType = DockerUnix
 	case "kvm_coreos":
 		tc.HostedType = KVMCoreOSFile
+	case "kvm_custom":
+		tc.HostedType = KVMCustom
 	default:
 		tc.HostedType = NoHostedPrograms
 	}
@@ -197,7 +184,7 @@ func (tc *Config) Merge(c Config) {
 		tc.HostType = c.HostType
 	}
 
-	if tc.HostChannelType == NoChannel || c.HostChannelType != NoChannel {
+	if tc.HostChannelType == "" || c.HostChannelType != "" {
 		tc.HostChannelType = c.HostChannelType
 	}
 
@@ -219,5 +206,29 @@ func (tc *Config) Merge(c Config) {
 
 	if tc.TPMDevice == "" || c.TPMDevice != "" {
 		tc.TPMDevice = c.TPMDevice
+	}
+
+	if tc.TPMAIKCertPath == "" || c.TPMAIKCertPath != "" {
+		tc.TPMAIKCertPath = c.TPMAIKCertPath
+	}
+
+	if tc.TPM2InfoDir == "" || c.TPM2InfoDir != "" {
+		tc.TPM2InfoDir = c.TPM2InfoDir
+	}
+
+	if tc.TPM2PCRs == "" || c.TPM2PCRs != "" {
+		tc.TPM2PCRs = c.TPM2PCRs
+	}
+
+	if tc.TPM2Device == "" || c.TPM2Device != "" {
+		tc.TPM2Device = c.TPM2Device
+	}
+
+	if tc.TPM2EkCert == "" || c.TPM2EkCert != "" {
+		tc.TPM2EkCert = c.TPM2EkCert
+	}
+
+	if tc.TPM2QuoteCert == "" || c.TPM2QuoteCert != "" {
+		tc.TPM2QuoteCert = c.TPM2QuoteCert
 	}
 }

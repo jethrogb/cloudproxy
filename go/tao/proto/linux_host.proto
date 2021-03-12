@@ -1,0 +1,53 @@
+//  Copyright (c) 2013, Google Inc.  All rights reserved.
+//
+// Licensed under the Apache License, Version 2.0 (the "License");
+// you may not use this file except in compliance with the License.
+// You may obtain a copy of the License at
+//
+//     http://www.apache.org/licenses/LICENSE-2.0
+//
+// Unless required by applicable law or agreed to in writing, software
+// distributed under the License is distributed on an "AS IS" BASIS,
+// WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+// See the License for the specific language governing permissions and
+// limitations under the License.
+syntax = "proto2";
+
+package tao;
+
+// TODO(jlm): Comments for these args.
+message LinuxHostSealedBundle {
+  required string policy = 1;
+  optional string policy_info = 2;
+  // Add: algoritm, key name
+  required bytes data = 3;
+}
+
+message LinuxHostConfig {
+  // Either "root" or "stacked"
+  required string type = 1;
+
+  // Either "TPM", "TPM2", "pipe", "file", or "unix"
+  optional string parent_type = 2;
+
+  // For non-tpm parent types, the parent connection spec
+  optional string parent_spec = 3;
+
+  // Socket directory, relative to host configuration directory.
+  optional string socket_dir = 4;
+
+  // Either "process", "docker", or "kvm_coreos"
+  required string hosting = 5;
+
+  // Path to CoreOS image for hosted KVM, absolute or relative to domain.
+  optional string kvm_coreos_img = 6;
+
+  // KB of memory to allocate for each VM
+  optional int32 kvm_coreos_vm_memory = 7;
+
+  // Path to CoreOS authorized_keys for hosted KVM, absolute or relative to domain.
+  optional string kvm_coreos_ssh_auth_keys = 8;
+
+  // KB of memory to allocate for each VM with custom kernel and initram.
+  optional int32 kvm_custom_vm_memory = 9;
+}

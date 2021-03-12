@@ -17,20 +17,10 @@ package tao
 import (
 	"bytes"
 	"io/ioutil"
-	"runtime"
 	"testing"
 
 	"github.com/jlmucb/cloudproxy/go/tao/auth"
 )
-
-// cleanUpTPMTao runs the finalizer for TPMTao early then unsets it so it
-// doesn't run later. Normal code will only create one instance of TPMTao, so
-// the finalizer will work correctly. But this test code creates multiple such
-// instances, so it needs to call the finalizer early.
-func cleanUpTPMTao(tt *TPMTao) {
-	FinalizeTPMTao(tt)
-	runtime.SetFinalizer(tt, nil)
-}
 
 func TestTPMTao(t *testing.T) {
 	aikblob, err := ioutil.ReadFile("./aikblob")
@@ -41,7 +31,7 @@ func TestTPMTao(t *testing.T) {
 	// Set up a TPM Tao that seals and attests against PCRs 17 and 18 and uses
 	// the AIK stored in aikblob. It communicates with the TPM directly through
 	// /dev/tpm0.
-	tt, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18})
+	tt, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18}, nil)
 	if err != nil {
 		t.Skip("Couldn't create a new TPM Tao:", err)
 	}
@@ -49,7 +39,7 @@ func TestTPMTao(t *testing.T) {
 	if !ok {
 		t.Fatal("Failed to create the right kind of Tao object from NewTPMTao")
 	}
-	cleanUpTPMTao(tpmtao)
+	CleanUpTPMTao(tpmtao)
 }
 
 func TestTPMTaoSeal(t *testing.T) {
@@ -58,7 +48,7 @@ func TestTPMTaoSeal(t *testing.T) {
 		t.Skip("Skipping tests, since there's no ./aikblob file")
 	}
 
-	tpmtao, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18})
+	tpmtao, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18}, nil)
 	if err != nil {
 		t.Skip("Couldn't create a new TPM Tao:", err)
 	}
@@ -66,7 +56,7 @@ func TestTPMTaoSeal(t *testing.T) {
 	if !ok {
 		t.Fatal("Failed to create the right kind of Tao object from NewTPMTao")
 	}
-	defer cleanUpTPMTao(tt)
+	defer CleanUpTPMTao(tt)
 
 	data := []byte(`test data to seal`)
 	sealed, err := tpmtao.Seal(data, SealPolicyDefault)
@@ -95,7 +85,7 @@ func TestTPMTaoLargeSeal(t *testing.T) {
 		t.Skip("Skipping tests, since there's no ./aikblob file")
 	}
 
-	tpmtao, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18})
+	tpmtao, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18}, nil)
 	if err != nil {
 		t.Skip("Couldn't create a new TPM Tao:", err)
 	}
@@ -103,7 +93,7 @@ func TestTPMTaoLargeSeal(t *testing.T) {
 	if !ok {
 		t.Fatal("Failed to create the right kind of Tao object from NewTPMTao")
 	}
-	defer cleanUpTPMTao(tt)
+	defer CleanUpTPMTao(tt)
 
 	data := make([]byte, 10000)
 	sealed, err := tpmtao.Seal(data, SealPolicyDefault)
@@ -132,7 +122,7 @@ func TestTPMTaoAttest(t *testing.T) {
 		t.Skip("Skipping tests, since there's no ./aikblob file")
 	}
 
-	tpmtao, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18})
+	tpmtao, err := NewTPMTao("/dev/tpm0", aikblob, []int{17, 18}, nil)
 	if err != nil {
 		t.Skip("Couldn't create a new TPM Tao:", err)
 	}
@@ -140,7 +130,7 @@ func TestTPMTaoAttest(t *testing.T) {
 	if !ok {
 		t.Fatal("Failed to create the right kind of Tao object from NewTPMTao")
 	}
-	defer cleanUpTPMTao(tt)
+	defer CleanUpTPMTao(tt)
 
 	// Set up a fake key delegation.
 	taoname, err := tpmtao.GetTaoName()
@@ -148,7 +138,7 @@ func TestTPMTaoAttest(t *testing.T) {
 		t.Fatal("Couldn't get the name of the tao:", err)
 	}
 	stmt := auth.Speaksfor{
-		Delegate:  auth.Prin{Type: "key", Key: auth.Bytes([]byte(`FakeKeyBytes`))},
+		Delegate:  auth.NewKeyPrin([]byte(`FakeKeyBytes`)),
 		Delegator: taoname,
 	}
 

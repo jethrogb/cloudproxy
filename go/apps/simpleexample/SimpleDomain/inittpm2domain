@@ -1,0 +1,48 @@
+#
+source ./defines
+
+if [[ -e $DOMAINTPM2/SimpleDomainService ]]
+then
+  echo "$DOMAINTPM2/SimpleDomainService exists"
+  rm $DOMAINTPM2/SimpleDomainService/*
+else
+  mkdir $DOMAINTPM2/SimpleDomainService
+  echo "$DOMAINTPM2/SimpleDomainService created"
+fi
+
+if [[ -e $DOMAINTPM2/SimpleClient ]]
+then
+  echo "$DOMAINTPM2/SimpleClient exists"
+  rm $DOMAINTPM2/SimpleClient/*
+else
+  mkdir $DOMAINTPM2/SimpleClient
+  echo "$DOMAINTPM2/SimpleClient created"
+fi
+
+if [[ -e $DOMAINTPM2/SimpleClientCpp ]]
+then
+  echo "$DOMAINTPM2/SimpleClientCpp exists"
+  rm $DOMAINTPM2/SimpleClientCpp/*
+else
+  mkdir $DOMAINTPM2/SimpleClientCpp
+  echo "$DOMAINTPM2/SimpleClientCpp created"
+fi
+
+if [[ -e $DOMAINTPM2/SimpleServer ]]
+then
+  echo "$DOMAINTPM2/SimpleServer exists"
+  rm $DOMAINTPM2/SimpleServer/*
+else
+  mkdir $DOMAINTPM2/SimpleServer
+  echo "$DOMAINTPM2/SimpleServer created"
+fi
+
+$BINPATH/tao domain init -tao_domain $DOMAINTPM2 -config_template $TEMPLATETPM2 -pass xxx
+
+$BINPATH/Endorsement -policy_key_dir $DOMAINTPM2/policy_keys \
+    -policy_key_password xxx -policy_key_is_ecdsa -endorsement_save_file $DOMAINTPM2/endorsement_cert
+$BINPATH/QuoteServer -pass xxx -path $DOMAINTPM2/policy_keys &
+echo -e "\nQuoteServer up and running\n"
+
+sleep 1
+$BINPATH/tao host init -tao_domain $DOMAINTPM2 -stacked -parent_type TPM2 -hosting process

@@ -49,6 +49,9 @@ type TPMTao struct {
 	// and Quote2 attestations.
 	verifier *rsa.PublicKey
 
+	// DER encoded endorsement certificate for the AIK
+	aikCert []byte
+
 	// pcrCount is the number of PCRs in the TPM. The current go-tpm
 	// implementation fixes this at 24.
 	pcrCount uint32
@@ -64,7 +67,7 @@ type TPMTao struct {
 }
 
 // NewTPMTao creates a new TPMTao and returns it under the Tao interface.
-func NewTPMTao(tpmPath string, aikblob []byte, pcrNums []int) (Tao, error) {
+func NewTPMTao(tpmPath string, aikblob []byte, pcrNums []int, aikCert []byte) (Tao, error) {
 	var err error
 	tt := &TPMTao{pcrCount: 24}
 	tt.tpmfile, err = os.OpenFile(tpmPath, os.O_RDWR, 0)
@@ -91,6 +94,8 @@ func NewTPMTao(tpmPath string, aikblob []byte, pcrNums []int) (Tao, error) {
 	if err != nil {
 		return nil, err
 	}
+
+	tt.aikCert = aikCert
 
 	// Get the pcr values for the PCR nums.
 	tt.pcrNums = make([]int, len(pcrNums))
@@ -128,7 +133,8 @@ func (tt *TPMTao) GetTaoName() (name auth.Prin, err error) {
 
 // ExtendTaoName irreversibly extends the Tao principal name of the caller.
 func (tt *TPMTao) ExtendTaoName(subprin auth.SubPrin) error {
-	return errors.New("name extensions are not supported for TPMTao")
+	tt.name = tt.name.MakeSubprincipal(subprin)
+	return nil
 }
 
 // GetRandomBytes returns a slice of n random bytes.
@@ -203,16 +209,16 @@ func (tt *TPMTao) Attest(issuer *auth.Prin, start, expiration *int64, message au
 		return nil, err
 	}
 
-	// Pull off the extensions from the name to get the bare TPM key for the
-	// signer.
-	signer := auth.Prin{
-		Type: tt.name.Type,
-		Key:  tt.name.Key,
+	aik, err := x509.MarshalPKIXPublicKey(tt.verifier)
+	if err != nil {
+		return nil, err
 	}
 	a := &Attestation{
 		SerializedStatement: ser,
 		Signature:           sig,
-		Signer:              auth.Marshal(signer),
+		SignerType:          proto.String("tpm"),
+		SignerKey:           aik,
+		RootEndorsement:     tt.aikCert,
 	}
 	return a, nil
 }
@@ -227,23 +233,28 @@ func (tt *TPMTao) Seal(data []byte, policy string) (sealed []byte, err error) {
 		return nil, errors.New("tpm-specific policies are not yet implemented")
 	}
 
-	crypter, err := GenerateCrypter()
-	if err != nil {
-		return nil, err
+	keyName := "SealingKey"
+	keyEpoch := int32(1)
+	keyPurpose := "crypting"
+	keyStatus := "active"
+	keyType := CrypterTypeFromSuiteName(TaoCryptoSuite)
+	if keyType == nil {
+		return nil, errors.New("unsupported sealer crypter")
 	}
-	defer ZeroBytes(crypter.aesKey)
-	defer ZeroBytes(crypter.hmacKey)
+	ck := GenerateCryptoKey(*keyType, &keyName, &keyEpoch, &keyPurpose, &keyStatus)
+	if ck == nil {
+		return nil, errors.New("Can't generate sealing key")
+	}
+	crypter := CrypterFromCryptoKey(*ck)
+	if crypter  == nil {
+		return nil, errors.New("Can't get crypter from sealing key")
+	}
+	defer crypter.Clear()
 
 	c, err := crypter.Encrypt(data)
 	if err != nil {
 		return nil, err
 	}
-
-	ck, err := MarshalCrypterProto(crypter)
-	if err != nil {
-		return nil, err
-	}
-	defer ZeroBytes(ck.Key)
 
 	ckb, err := proto.Marshal(ck)
 	if err != nil {
@@ -283,14 +294,12 @@ func (tt *TPMTao) Unseal(sealed []byte) (data []byte, policy string, err error) 
 	if err := proto.Unmarshal(unsealed, &ck); err != nil {
 		return nil, "", err
 	}
-	defer ZeroBytes(ck.Key)
+	defer ck.Clear()
 
-	crypter, err := UnmarshalCrypterProto(&ck)
-	if err != nil {
-		return nil, "", err
+	crypter := CrypterFromCryptoKey(ck)
+	if err == nil {
+		return nil, "", errors.New("Cant get crypter from crypto key")
 	}
-	defer ZeroBytes(crypter.aesKey)
-	defer ZeroBytes(crypter.hmacKey)
 
 	m, err := crypter.Decrypt(h.EncryptedData)
 	if err != nil {
@@ -298,6 +307,22 @@ func (tt *TPMTao) Unseal(sealed []byte) (data []byte, policy string, err error) 
 	}
 
 	return m, SealPolicyDefault, nil
+}
+
+func (s *TPMTao) InitCounter(label string, c int64) (error) {
+	return errors.New("InitCounter for tpm not implemented")
+}
+
+func (s *TPMTao) GetCounter(label string) (int64, error) {
+	return int64(0), errors.New("GetCounter for tpm not implemented")
+}
+
+func (s *TPMTao) RollbackProtectedSeal(label string, data []byte, policy string) ([]byte, error) {
+	return nil, errors.New("RollbackProtectedSeal for tpm not implemented")
+}
+
+func (s *TPMTao) RollbackProtectedUnseal(sealed []byte) ([]byte, string,  error) {
+	return nil, "", errors.New("RollbackProtectedUnseal for tpm not implemented")
 }
 
 // extractPCRs gets the PCRs from a tpm principal.
@@ -351,18 +376,10 @@ func extractPCRs(p auth.Prin) ([]int, []byte, error) {
 	return pcrNums, pcrVals, nil
 }
 
-// extractAIK gets an RSA public key from the TPM principal name.
-func extractAIK(p auth.Prin) (*rsa.PublicKey, error) {
+// extractTPMKey gets an RSA public key from the TPM key material.
+func extractTPMKey(material []byte) (*rsa.PublicKey, error) {
 	// The principal's Key should be a binary SubjectPublicKeyInfo.
-	if p.Type != "tpm" {
-		return nil, errors.New("wrong type of principal: should be 'tpm'")
-	}
-
-	k, ok := p.Key.(auth.Bytes)
-	if !ok {
-		return nil, errors.New("the AIK key must be an auth.Bytes values")
-	}
-	pk, err := x509.ParsePKIXPublicKey([]byte(k))
+	pk, err := x509.ParsePKIXPublicKey(material)
 	if err != nil {
 		return nil, err
 	}
@@ -393,10 +410,7 @@ func MakeTPMPrin(verifier *rsa.PublicKey, pcrNums []int, pcrVals [][]byte) (auth
 		return auth.Prin{}, err
 	}
 
-	name := auth.Prin{
-		Type: "tpm",
-		Key:  auth.Bytes(aik),
-	}
+	name := auth.NewTPMPrin(aik)
 
 	asp := auth.PrinExt{
 		Name: "PCRs",
@@ -418,4 +432,13 @@ func MakeTPMPrin(verifier *rsa.PublicKey, pcrNums []int, pcrVals [][]byte) (auth
 	name.Ext = []auth.PrinExt{asp}
 
 	return name, nil
+}
+
+// CleanUpTPMTao runs the finalizer for TPMTao early then unsets it so it
+// doesn't run later. Normal code will only create one instance of TPMTao, so
+// the finalizer will work correctly. But this test code creates multiple such
+// instances, so it needs to call the finalizer early.
+func CleanUpTPMTao(tt *TPMTao) {
+	FinalizeTPMTao(tt)
+	runtime.SetFinalizer(tt, nil)
 }

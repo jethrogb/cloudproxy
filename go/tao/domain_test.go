@@ -25,10 +25,7 @@ import (
 )
 
 var testDomainPassword = []byte(`insecure dummy password`)
-var authPrin = auth.Prin{
-	Type: "key",
-	Key:  auth.Bytes([]byte(`fake key`)),
-}
+var authPrin = auth.NewKeyPrin([]byte(`fake key`))
 
 func testNewACLDomain(t *testing.T) (*Domain, string) {
 	tmpdir, err := ioutil.TempDir("/tmp", "acl_domain_test")
@@ -61,7 +58,6 @@ func TestDomainACLSaveAndLoad(t *testing.T) {
 	if err := d.Save(); err != nil {
 		t.Fatal("Couldn't save the ACL-based domain:", err)
 	}
-
 	d2, err := LoadDomain(path.Join(tmpdir, "tao.config"), testDomainPassword)
 	if err != nil {
 		t.Fatal("Couldn't load the ACL domain:", err)

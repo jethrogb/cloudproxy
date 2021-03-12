@@ -5,22 +5,31 @@
 package tao
 
 import proto "github.com/golang/protobuf/proto"
+import fmt "fmt"
 import math "math"
 
 // Reference imports to suppress errors if they are not otherwise used.
 var _ = proto.Marshal
+var _ = fmt.Errorf
 var _ = math.Inf
 
 type LinuxHostAdminRPCRequest struct {
 	Subprin          []byte   `protobuf:"bytes,1,opt,name=subprin" json:"subprin,omitempty"`
 	Path             *string  `protobuf:"bytes,2,opt,name=path" json:"path,omitempty"`
 	Args             []string `protobuf:"bytes,3,rep,name=args" json:"args,omitempty"`
+	Pid              *int32   `protobuf:"varint,4,opt,name=pid" json:"pid,omitempty"`
+	Dir              *string  `protobuf:"bytes,5,opt,name=dir" json:"dir,omitempty"`
+	ContainerArgs    []string `protobuf:"bytes,6,rep,name=container_args" json:"container_args,omitempty"`
+	Stdin            *int32   `protobuf:"varint,7,opt,name=stdin" json:"stdin,omitempty"`
+	Stdout           *int32   `protobuf:"varint,8,opt,name=stdout" json:"stdout,omitempty"`
+	Stderr           *int32   `protobuf:"varint,9,opt,name=stderr" json:"stderr,omitempty"`
 	XXX_unrecognized []byte   `json:"-"`
 }
 
-func (m *LinuxHostAdminRPCRequest) Reset()         { *m = LinuxHostAdminRPCRequest{} }
-func (m *LinuxHostAdminRPCRequest) String() string { return proto.CompactTextString(m) }
-func (*LinuxHostAdminRPCRequest) ProtoMessage()    {}
+func (m *LinuxHostAdminRPCRequest) Reset()                    { *m = LinuxHostAdminRPCRequest{} }
+func (m *LinuxHostAdminRPCRequest) String() string            { return proto.CompactTextString(m) }
+func (*LinuxHostAdminRPCRequest) ProtoMessage()               {}
+func (*LinuxHostAdminRPCRequest) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{0} }
 
 func (m *LinuxHostAdminRPCRequest) GetSubprin() []byte {
 	if m != nil {
@@ -43,15 +52,58 @@ func (m *LinuxHostAdminRPCRequest) GetArgs() []string {
 	return nil
 }
 
+func (m *LinuxHostAdminRPCRequest) GetPid() int32 {
+	if m != nil && m.Pid != nil {
+		return *m.Pid
+	}
+	return 0
+}
+
+func (m *LinuxHostAdminRPCRequest) GetDir() string {
+	if m != nil && m.Dir != nil {
+		return *m.Dir
+	}
+	return ""
+}
+
+func (m *LinuxHostAdminRPCRequest) GetContainerArgs() []string {
+	if m != nil {
+		return m.ContainerArgs
+	}
+	return nil
+}
+
+func (m *LinuxHostAdminRPCRequest) GetStdin() int32 {
+	if m != nil && m.Stdin != nil {
+		return *m.Stdin
+	}
+	return 0
+}
+
+func (m *LinuxHostAdminRPCRequest) GetStdout() int32 {
+	if m != nil && m.Stdout != nil {
+		return *m.Stdout
+	}
+	return 0
+}
+
+func (m *LinuxHostAdminRPCRequest) GetStderr() int32 {
+	if m != nil && m.Stderr != nil {
+		return *m.Stderr
+	}
+	return 0
+}
+
 type LinuxHostAdminRPCHostedProgram struct {
 	Subprin          []byte `protobuf:"bytes,1,req,name=subprin" json:"subprin,omitempty"`
 	Pid              *int32 `protobuf:"varint,2,req,name=pid" json:"pid,omitempty"`
 	XXX_unrecognized []byte `json:"-"`
 }
 
-func (m *LinuxHostAdminRPCHostedProgram) Reset()         { *m = LinuxHostAdminRPCHostedProgram{} }
-func (m *LinuxHostAdminRPCHostedProgram) String() string { return proto.CompactTextString(m) }
-func (*LinuxHostAdminRPCHostedProgram) ProtoMessage()    {}
+func (m *LinuxHostAdminRPCHostedProgram) Reset()                    { *m = LinuxHostAdminRPCHostedProgram{} }
+func (m *LinuxHostAdminRPCHostedProgram) String() string            { return proto.CompactTextString(m) }
+func (*LinuxHostAdminRPCHostedProgram) ProtoMessage()               {}
+func (*LinuxHostAdminRPCHostedProgram) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{1} }
 
 func (m *LinuxHostAdminRPCHostedProgram) GetSubprin() []byte {
 	if m != nil {
@@ -70,12 +122,14 @@ func (m *LinuxHostAdminRPCHostedProgram) GetPid() int32 {
 type LinuxHostAdminRPCResponse struct {
 	Child            []*LinuxHostAdminRPCHostedProgram `protobuf:"bytes,1,rep,name=child" json:"child,omitempty"`
 	Prin             []byte                            `protobuf:"bytes,2,opt,name=prin" json:"prin,omitempty"`
+	Status           *int32                            `protobuf:"varint,3,opt,name=status" json:"status,omitempty"`
 	XXX_unrecognized []byte                            `json:"-"`
 }
 
-func (m *LinuxHostAdminRPCResponse) Reset()         { *m = LinuxHostAdminRPCResponse{} }
-func (m *LinuxHostAdminRPCResponse) String() string { return proto.CompactTextString(m) }
-func (*LinuxHostAdminRPCResponse) ProtoMessage()    {}
+func (m *LinuxHostAdminRPCResponse) Reset()                    { *m = LinuxHostAdminRPCResponse{} }
+func (m *LinuxHostAdminRPCResponse) String() string            { return proto.CompactTextString(m) }
+func (*LinuxHostAdminRPCResponse) ProtoMessage()               {}
+func (*LinuxHostAdminRPCResponse) Descriptor() ([]byte, []int) { return fileDescriptor6, []int{2} }
 
 func (m *LinuxHostAdminRPCResponse) GetChild() []*LinuxHostAdminRPCHostedProgram {
 	if m != nil {
@@ -91,5 +145,36 @@ func (m *LinuxHostAdminRPCResponse) GetPrin() []byte {
 	return nil
 }
 
+func (m *LinuxHostAdminRPCResponse) GetStatus() int32 {
+	if m != nil && m.Status != nil {
+		return *m.Status
+	}
+	return 0
+}
+
 func init() {
+	proto.RegisterType((*LinuxHostAdminRPCRequest)(nil), "tao.LinuxHostAdminRPCRequest")
+	proto.RegisterType((*LinuxHostAdminRPCHostedProgram)(nil), "tao.LinuxHostAdminRPCHostedProgram")
+	proto.RegisterType((*LinuxHostAdminRPCResponse)(nil), "tao.LinuxHostAdminRPCResponse")
+}
+
+var fileDescriptor6 = []byte{
+	// 259 bytes of a gzipped FileDescriptorProto
+	0x1f, 0x8b, 0x08, 0x00, 0x00, 0x09, 0x6e, 0x88, 0x02, 0xff, 0x84, 0x90, 0xb1, 0x4e, 0xc3, 0x30,
+	0x14, 0x45, 0x95, 0xb8, 0x6e, 0xe9, 0x6b, 0x29, 0x52, 0x06, 0x64, 0x18, 0x50, 0x15, 0x96, 0x4e,
+	0x19, 0xfa, 0x01, 0x48, 0x88, 0x85, 0x81, 0xa1, 0xea, 0x0f, 0x44, 0x26, 0xb6, 0x1a, 0x4b, 0x8d,
+	0x6d, 0x9e, 0x6d, 0x89, 0x4f, 0xe2, 0x33, 0x79, 0xb6, 0x18, 0x40, 0x20, 0xb1, 0xe5, 0x28, 0xf7,
+	0xe6, 0x9d, 0x5c, 0xb8, 0x3d, 0x1b, 0x9b, 0xde, 0xfb, 0xd1, 0x85, 0xd8, 0x4b, 0x35, 0x19, 0xdb,
+	0xa3, 0x1f, 0x3a, 0x8f, 0x2e, 0xba, 0x86, 0x45, 0xe9, 0xda, 0x8f, 0x0a, 0xc4, 0x4b, 0xce, 0x3c,
+	0x53, 0xe4, 0x31, 0x27, 0x8e, 0x87, 0xa7, 0xa3, 0x7e, 0x4b, 0x3a, 0xc4, 0xe6, 0x0a, 0x16, 0x21,
+	0xbd, 0x7a, 0x34, 0x56, 0x54, 0xdb, 0x6a, 0xb7, 0x6e, 0xd6, 0x30, 0xf3, 0x32, 0x8e, 0xa2, 0x26,
+	0x5a, 0x66, 0x92, 0x78, 0x0a, 0x82, 0x6d, 0x19, 0xd1, 0x0a, 0x98, 0x37, 0x4a, 0xcc, 0xe8, 0x15,
+	0xcf, 0xa0, 0x0c, 0x0a, 0x5e, 0x72, 0xd7, 0xb0, 0x19, 0x9c, 0x8d, 0xd2, 0x58, 0x8d, 0x7d, 0x69,
+	0xcc, 0x4b, 0xe3, 0x12, 0x78, 0x88, 0x8a, 0x3e, 0xbe, 0x28, 0x9d, 0x0d, 0xcc, 0x09, 0x5d, 0x8a,
+	0xe2, 0xe2, 0x1b, 0x6b, 0x44, 0xb1, 0xcc, 0xdc, 0x3e, 0xc0, 0xdd, 0x2f, 0xd3, 0xfc, 0xac, 0xd5,
+	0x01, 0xdd, 0x09, 0xe5, 0xf4, 0xd3, 0xb7, 0x26, 0xdf, 0x2f, 0xa7, 0x9a, 0x80, 0xb7, 0x13, 0xdc,
+	0xfc, 0xf1, 0xa7, 0xc1, 0x3b, 0x1b, 0x74, 0xb3, 0x07, 0x3e, 0x8c, 0xe6, 0xac, 0xa8, 0xc8, 0x76,
+	0xab, 0xfd, 0x7d, 0x47, 0xe3, 0x74, 0xff, 0x9c, 0xcb, 0x6b, 0xe4, 0x5b, 0x75, 0xd9, 0xa6, 0xe8,
+	0xca, 0x98, 0xf2, 0x1e, 0xa4, 0xfb, 0x19, 0x00, 0x00, 0xff, 0xff, 0x5b, 0xb0, 0xde, 0xf2, 0x7b,
+	0x01, 0x00, 0x00,
 }

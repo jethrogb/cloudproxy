@@ -1,0 +1,5 @@
+#
+source ./defines
+# $BINPATH/tao run $BINPATH/simpleclient &
+$BINPATH/tao run -tao_domain $DOMAIN /Domains/go_child &
+

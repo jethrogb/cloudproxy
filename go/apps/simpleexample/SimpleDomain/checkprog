@@ -1,0 +1,7 @@
+#
+ps aux | fgrep linux_host
+ps aux | fgrep simpledomainserver
+ps aux | fgrep simpleclient
+ps aux | fgrep simpleserver
+ps aux | fgrep Simple
+

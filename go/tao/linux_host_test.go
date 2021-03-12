@@ -16,6 +16,7 @@ package tao
 
 import (
 	"bytes"
+	"fmt"
 	"io/ioutil"
 	"os"
 	"testing"
@@ -23,52 +24,85 @@ import (
 	"github.com/jlmucb/cloudproxy/go/tao/auth"
 )
 
-func testNewStackedLinuxHost(t *testing.T) (*LinuxHost, string) {
+func testNewStackedLinuxHost() (*LinuxHost, error) {
 	tmpdir, err := ioutil.TempDir("/tmp", "test_new_stacked_linux_host")
 	if err != nil {
-		t.Fatal("Couldn't get a temp directory for the new stacked linux host")
+		return nil, err
 	}
+	defer os.RemoveAll(tmpdir)
 
 	ft, err := NewSoftTao("", nil)
 	if err != nil {
-		t.Fatal("Couldn't create a new fake Tao:", err)
+		return nil, err
 	}
 
 	tg := LiberalGuard
 	lh, err := NewStackedLinuxHost(tmpdir, &tg, ft, nil)
 	if err != nil {
-		os.RemoveAll(tmpdir)
-		t.Fatal("Couldn't create a new stacked Linux host")
+		return nil, err
 	}
 
-	return lh, tmpdir
+	return lh, nil
 }
 
-func testNewRootLinuxHost(t *testing.T) (*LinuxHost, string) {
+func testNewRootLinuxHost() (*LinuxHost, error) {
 	tmpdir, err := ioutil.TempDir("/tmp", "test_new_root_linux_host")
 	if err != nil {
-		t.Fatal("Couldn't get a temp directory for the new root linux host")
+		return nil, err
 	}
+	defer os.RemoveAll(tmpdir)
 
 	tg := LiberalGuard
 	password := []byte("bad password")
 	lh, err := NewRootLinuxHost(tmpdir, &tg, password, nil)
 	if err != nil {
-		os.RemoveAll(tmpdir)
-		t.Fatal("Couldn't create a new stacked Linux host")
+		return nil, err
 	}
 
-	return lh, tmpdir
+	return lh, nil
 }
 
 func TestNewStackedLinuxHost(t *testing.T) {
-	_, td := testNewStackedLinuxHost(t)
-	defer os.RemoveAll(td)
+	if _, err := testNewStackedLinuxHost(); err != nil {
+		t.Fatal(err)
+	}
 }
 
 func TestNewRootLinuxHost(t *testing.T) {
-	_, td := testNewRootLinuxHost(t)
-	defer os.RemoveAll(td)
+	if _, err := testNewRootLinuxHost(); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestNewStackedLinuxHostWithTao(t *testing.T) {
+	tmpdir, err := ioutil.TempDir("", "test_new_stacked_linux_host")
+	if err != nil {
+		t.Errorf("ioutil.TempDir(\"\", \"test_new_stacked_linux_host\") = %v; want no error", err)
+	}
+	defer os.RemoveAll(tmpdir)
+
+	tc := &Config{
+		HostType:        Stacked,
+		HostChannelType: "completely fake type",
+		HostSpec:        "completely fake spec",
+		HostedType:      NoHostedPrograms,
+	}
+
+	st, err := NewSoftTao("", nil)
+	if err != nil {
+		t.Errorf("NewSoftTao(\"\", nil) = %v; want no error", err)
+	}
+
+	f := func(string) (Tao, error) {
+		return st, nil
+	}
+	Register("completely fake type", f)
+
+	parentTao := ParentFromConfig(*tc)
+	tg := LiberalGuard
+	if _, err = NewStackedLinuxHost(tmpdir, &tg, parentTao, nil); err != nil {
+		t.Errorf("NewStackedLinuxHost(%q, %v, %v, nil) = %v", tmpdir, tg, parentTao, nil)
+	}
 }
 
 // Test the methods directly instead of testing them across a channel.
@@ -79,131 +113,156 @@ var testChildLH = &LinuxHostChild{
 	ChildSubprin: []auth.PrinExt{auth.PrinExt{Name: "TestChild"}},
 }
 
-func testLinuxHostHandleGetTaoName(t *testing.T, lh *LinuxHost) {
-	if !lh.GetTaoName(testChildLH).Identical(lh.taoHost.HostName().MakeSubprincipal(testChildLH.ChildSubprin)) {
-		t.Fatal("Incorrect construction of Tao name")
+func DoTestLinuxHostHandleGetTaoName(lh *LinuxHost) error {
+	if !lh.GetTaoName(testChildLH).Identical(lh.Host.HostName().MakeSubprincipal(testChildLH.ChildSubprin)) {
+		return fmt.Errorf("Incorrect construction of Tao name")
 	}
+
+	return nil
 }
 
-func testLinuxHostHandleGetRandomBytes(t *testing.T, lh *LinuxHost) {
+func DoTestLinuxHostHandleGetRandomBytes(lh *LinuxHost) error {
 	b, err := lh.GetRandomBytes(testChildLH, 10)
 	if err != nil {
-		t.Fatal("Failed to get random bytes from the Linux host:", err)
+		return fmt.Errorf("Failed to get random bytes from the Linux host: %s", err)
 	}
 
 	if len(b) != 10 {
-		t.Fatal("Linux host returned the incorrect number of random bytes")
+		return fmt.Errorf("Linux host returned the incorrect number of random bytes")
 	}
+
+	return nil
 }
 
-func testLinuxHostHandleGetSharedSecret(t *testing.T, lh *LinuxHost) {
+func DoTestLinuxHostHandleGetSharedSecret(lh *LinuxHost) error {
 	b, err := lh.GetSharedSecret(testChildLH, 10, SharedSecretPolicyDefault)
 	if err != nil {
-		t.Fatal("Couldn't get a shared secret from the Linux host:", err)
+		return fmt.Errorf("Couldn't get a shared secret from the Linux host: %s", err)
 	}
 
 	b2, err := lh.GetSharedSecret(testChildLH, 10, SharedSecretPolicyDefault)
 	if err != nil {
-		t.Fatal("Couldn't get a second shared secret from the Linux host:", err)
+		return fmt.Errorf("Couldn't get a second shared secret from the Linux host: %s", err)
 	}
 
 	if len(b) == 0 || !bytes.Equal(b, b2) {
-		t.Fatal("Invalid or inconsistent secrets returned from HandleGetSharedSecret in the Linux host")
+		return fmt.Errorf("Invalid or inconsistent secrets returned from HandleGetSharedSecret in the Linux host")
 	}
+
+	return nil
 }
 
-func testLinuxHostHandleSealUnseal(t *testing.T, lh *LinuxHost) {
+func DoTestLinuxHostHandleSealUnseal(lh *LinuxHost) error {
 	data := []byte{1, 2, 3, 4, 5, 6, 7}
-	b, err := lh.Seal(testChildLH, data, SharedSecretPolicyDefault)
+
+	// `in` will be zeroed-out by LinuxHost.Seal(). Make a copy
+	// to compare to the result of LinuxHost.Unseal().
+	in := make([]byte, len(data))
+	copy(in, data)
+
+	b, err := lh.Seal(testChildLH, in, SharedSecretPolicyDefault)
 	if err != nil {
-		t.Fatal("Couldn't seal the data:", err)
+		return fmt.Errorf("Couldn't seal the data: %s", err)
 	}
 
 	d, policy, err := lh.Unseal(testChildLH, b)
 	if err != nil {
-		t.Fatal("Couldn't unseal the sealed data")
+		return fmt.Errorf("Couldn't unseal the sealed data: %s", err)
 	}
 
 	if !bytes.Equal(d, data) {
-		t.Fatal("Incorrect unsealed data")
+		return fmt.Errorf("Incorrect unsealed data: %s", d)
 	}
 
 	if policy != SharedSecretPolicyDefault {
-		t.Fatal("Wrong policy returned by Unseal")
+		return fmt.Errorf("Wrong policy returned by Unseal: %s", policy)
 	}
+
+	return nil
 }
 
-func testLinuxHostHandleAttest(t *testing.T, lh *LinuxHost) {
+func DoTestLinuxHostHandleAttest(lh *LinuxHost) error {
 	stmt := auth.Pred{Name: "FakePredicate"}
 
 	a, err := lh.Attest(testChildLH, nil, nil, nil, stmt)
 	if err != nil {
-		t.Fatal("Couldn't create Attestation")
+		return fmt.Errorf("Couldn't create Attestation")
 	}
 
 	if a == nil {
-		t.Fatal("Returned invalid Attestation from Attest")
+		return fmt.Errorf("Returned invalid Attestation from Attest")
 	}
 
 	// TODO(tmroeder): verify this attestation.
+	return nil
 }
 
 func testRootLinuxHostHandleGetTaoName(t *testing.T) {
-	lh, td := testNewRootLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleGetTaoName(t, lh)
+	lh, _ := testNewRootLinuxHost()
+	if err := DoTestLinuxHostHandleGetTaoName(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testRootLinuxHostHandleGetRandomBytes(t *testing.T) {
-	lh, td := testNewRootLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleGetRandomBytes(t, lh)
+	lh, _ := testNewRootLinuxHost()
+	if err := DoTestLinuxHostHandleGetRandomBytes(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testRootLinuxHostHandleGetSharedSecret(t *testing.T) {
-	lh, td := testNewRootLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleGetSharedSecret(t, lh)
+	lh, _ := testNewRootLinuxHost()
+	if err := DoTestLinuxHostHandleGetSharedSecret(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testRootLinuxHostHandleSealUnseal(t *testing.T) {
-	lh, td := testNewRootLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleSealUnseal(t, lh)
+	lh, _ := testNewRootLinuxHost()
+	if err := DoTestLinuxHostHandleSealUnseal(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testRootLinuxHostHandleAttest(t *testing.T) {
-	lh, td := testNewRootLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleAttest(t, lh)
+	lh, _ := testNewRootLinuxHost()
+	if err := DoTestLinuxHostHandleAttest(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testStackedLinuxHostHandleGetTaoName(t *testing.T) {
-	lh, td := testNewStackedLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleGetTaoName(t, lh)
+	lh, _ := testNewStackedLinuxHost()
+	if err := DoTestLinuxHostHandleGetTaoName(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testStackedLinuxHostHandleGetRandomBytes(t *testing.T) {
-	lh, td := testNewStackedLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleGetRandomBytes(t, lh)
+	lh, _ := testNewStackedLinuxHost()
+	if err := DoTestLinuxHostHandleGetRandomBytes(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testStackedLinuxHostHandleGetSharedSecret(t *testing.T) {
-	lh, td := testNewStackedLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleGetSharedSecret(t, lh)
+	lh, _ := testNewStackedLinuxHost()
+	if err := DoTestLinuxHostHandleGetSharedSecret(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testStackedLinuxHostHandleSealUnseal(t *testing.T) {
-	lh, td := testNewStackedLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleSealUnseal(t, lh)
+	lh, _ := testNewStackedLinuxHost()
+	if err := DoTestLinuxHostHandleSealUnseal(lh); err != nil {
+		t.Error(err)
+	}
 }
 
 func testStackedLinuxHostHandleAttest(t *testing.T) {
-	lh, td := testNewStackedLinuxHost(t)
-	defer os.RemoveAll(td)
-	testLinuxHostHandleAttest(t, lh)
+	lh, _ := testNewStackedLinuxHost()
+	if err := DoTestLinuxHostHandleAttest(lh); err != nil {
+		t.Error(err)
+	}
 }

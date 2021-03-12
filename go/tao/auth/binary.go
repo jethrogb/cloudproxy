@@ -44,7 +44,8 @@ const (
 	tagExists    // string, Form
 
 	// Other tags
-	tagSubPrin // [](string, []Term)
+	tagSubPrin // []PrinExt
+	tagPrinExt // string, []Term
 )
 
 // Context holds outer variable bindings in the order they appear.
@@ -79,7 +80,7 @@ func Marshal(e LogicElement) []byte {
 func (t Prin) Marshal(buf *Buffer) {
 	buf.EncodeVarint(tagPrin)
 	buf.EncodeString(t.Type)
-	t.Key.Marshal(buf)
+	t.KeyHash.Marshal(buf)
 	t.Ext.Marshal(buf)
 }
 
@@ -89,16 +90,21 @@ func (t PrinTail) Marshal(buf *Buffer) {
 	t.Ext.Marshal(buf)
 }
 
+func (t PrinExt) Marshal(buf *Buffer) {
+	buf.EncodeVarint(tagPrinExt)
+	buf.EncodeString(t.Name)
+	buf.EncodeVarint(int64(len(t.Arg)))
+	for _, e := range t.Arg {
+		e.Marshal(buf)
+	}
+}
+
 // Marshal encodes a SubPrin.
 func (s SubPrin) Marshal(buf *Buffer) {
 	buf.EncodeVarint(tagSubPrin)
 	buf.EncodeVarint(int64(len(s)))
 	for _, e := range s {
-		buf.EncodeString(e.Name)
-		buf.EncodeVarint(int64(len(e.Arg)))
-		for _, a := range e.Arg {
-			a.Marshal(buf)
-		}
+		e.Marshal(buf)
 	}
 }
 
@@ -233,7 +239,7 @@ func decodeTermVar(buf *Buffer) (TermVar, error) {
 	return TermVar(v), err
 }
 
-// decodeNameAndArgs decodes a name ad term array without leading tags.
+// decodeNameAndArgs decodes a name and term array without leading tags.
 func decodeNameAndArgs(buf *Buffer) (name string, args []Term, err error) {
 	name, err = buf.DecodeString()
 	if err != nil {
@@ -256,7 +262,7 @@ func decodePrin(buf *Buffer) (p Prin, err error) {
 	if err != nil {
 		return
 	}
-	p.Key, err = unmarshalTerm(buf)
+	p.KeyHash, err = unmarshalTerm(buf)
 	if err != nil {
 		return
 	}
@@ -267,6 +273,22 @@ func decodePrin(buf *Buffer) (p Prin, err error) {
 // decodePrinTail decodes a PrinTail without the leading tag.
 func decodePrinTail(buf *Buffer) (p PrinTail, err error) {
 	p.Ext, err = unmarshalSubPrin(buf)
+	return
+}
+
+// decodePrinExt decodes a PrinExt without the leading tag.
+func decodePrinExt(buf *Buffer) (p PrinExt, err error) {
+	tag, err := buf.DecodeVarint()
+	if err != nil {
+		return PrinExt{}, err
+	}
+	if tag != tagPrinExt {
+		err = fmt.Errorf("unexpected tag: %d", tag)
+		return
+	}
+	p.Name, p.Arg, err = decodeNameAndArgs(buf)
+	if err == nil {
+	}
 	return
 }
 
@@ -290,11 +312,11 @@ func decodeSubPrin(buf *Buffer) (s SubPrin, err error) {
 		return
 	}
 	for i := int64(0); i < n; i++ {
-		name, args, err := decodeNameAndArgs(buf)
+		p, err := decodePrinExt(buf)
 		if err != nil {
-			return s, err
+			return nil, err
 		}
-		s = append(s, PrinExt{name, args})
+		s = append(s, p)
 	}
 	return
 }
@@ -347,6 +369,12 @@ func UnmarshalPrinTail(bytes []byte) (p PrinTail, err error) {
 		err = fmt.Errorf("expected PrinTail, found %T", t)
 	}
 	return
+}
+
+// UnmarshalPrinExt decodes a PrinExt.
+func UnmarshalPrinExt(bytes []byte) (p PrinExt, err error) {
+	buf := &Buffer{bytes}
+	return decodePrinExt(buf)
 }
 
 // UnmarshalTerm decodes a Term.

@@ -71,8 +71,6 @@ var (
 	tokenFalse     = token{itemKeyword, "false"}
 	tokenTrue      = token{itemKeyword, "true"}
 	tokenExt       = token{itemKeyword, "ext"}
-	tokenKey       = token{itemKeyword, "key"}
-	tokenTPM       = token{itemKeyword, "tpm"}
 	tokenLP        = token{itemLP, '('}
 	tokenRP        = token{itemRP, ')'}
 	tokenComma     = token{itemComma, ','}
@@ -80,6 +78,32 @@ var (
 	tokenColon     = token{itemColon, ':'}
 	tokenEOF       = token{itemEOF, nil}
 )
+
+var reservedKeywordTokens = map[token]bool{
+	tokenFrom:      true,
+	tokenUntil:     true,
+	tokenSays:      true,
+	tokenSpeaksfor: true,
+	tokenForall:    true,
+	tokenExists:    true,
+	tokenImplies:   true,
+	tokenOr:        true,
+	tokenAnd:       true,
+	tokenNot:       true,
+	tokenFalse:     true,
+	tokenTrue:      true,
+	tokenExt:       true,
+}
+
+// isPrinToken checks if the input is a principal token. A principal tokens
+// is a keyword not in the set of reserved keywords.
+func isPrinToken(i token) bool {
+	_, ok := reservedKeywordTokens[i]
+	if !ok && i.typ == itemKeyword && lower(rune(i.val.(string)[0])) {
+		return true
+	}
+	return false
+}
 
 // String returns pretty-printed token, e.g. for debugging.
 func (i token) String() string {

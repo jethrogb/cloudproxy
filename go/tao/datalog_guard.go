@@ -17,6 +17,7 @@
 package tao
 
 import (
+	"crypto/sha256"
 	"fmt"
 	"io/ioutil"
 	"os"
@@ -70,6 +71,7 @@ const (
 // "Pred(...)" alone is translated to "says(K, \"Pred\", ...)".
 //
 // "forall ... F1 and F2 and ... imp G" is translated to "G :- F1, F2, ...".
+// Not safe for concurrent use by goroutines.
 type DatalogGuard struct {
 	Config DatalogGuardDetails
 	Key    *Verifier
@@ -77,6 +79,7 @@ type DatalogGuard struct {
 	modTime time.Time // Modification time of signed rules file at time of reading.
 	db      DatalogRules
 	dl      *dlengine.Engine
+	sp      *subprinPrim
 }
 
 // subprinPrim is a custom datalog primitive that implements subprincipal
@@ -84,6 +87,7 @@ type DatalogGuard struct {
 // DatalogGuard to write in datalog to subprin/3 with arguments S, P, E.
 type subprinPrim struct {
 	datalog.DistinctPred
+	max int
 }
 
 // String returns a string representation of the subprin custom datalog
@@ -174,9 +178,9 @@ func (sp *subprinPrim) Search(target *datalog.Literal, discovered func(c *datalo
 		}
 		extIndex := len(prin.Ext) - 1
 		trimmedPrin := auth.Prin{
-			Type: prin.Type,
-			Key:  prin.Key,
-			Ext:  prin.Ext[:extIndex],
+			Type:    prin.Type,
+			KeyHash: prin.KeyHash,
+			Ext:     prin.Ext[:extIndex],
 		}
 		extPrin := auth.PrinTail{
 			Ext: []auth.PrinExt{prin.Ext[extIndex]},
@@ -192,7 +196,9 @@ func (sp *subprinPrim) Search(target *datalog.Literal, discovered func(c *datalo
 		}
 		oprin.Ext = append(oprin.Ext, eprin.Ext...)
 		oeIdent := dlengine.NewIdent(fmt.Sprintf("%q", oprin.String()))
-		discovered(datalog.NewClause(datalog.NewLiteral(sp, oeIdent, o, e)))
+		if len(oprin.Ext)+1 <= sp.max {
+			discovered(datalog.NewClause(datalog.NewLiteral(sp, oeIdent, o, e)))
+		}
 	} else if p.Constant() && o.Constant() && e.Constant() {
 		// Check that the constraint holds and report it as discovered.
 		prin, err := parseCompositePrin(p)
@@ -205,7 +211,8 @@ func (sp *subprinPrim) Search(target *datalog.Literal, discovered func(c *datalo
 		}
 
 		// Extend the root principal with the extension from the ext principal
-		// and check identity.
+		// and check identity. Make sure the constructed principal does
+		// not exceed the given maximum principal length.
 		oprin.Ext = append(oprin.Ext, eprin.Ext...)
 		if prin.Identical(oprin) {
 			discovered(datalog.NewClause(datalog.NewLiteral(sp, p, o, e)))
@@ -217,11 +224,11 @@ func (sp *subprinPrim) Search(target *datalog.Literal, discovered func(c *datalo
 // non-persistent rule set. It adds a custom predicate subprin(P, O, E) to check
 // if a principal P is a subprincipal O.E.
 func NewTemporaryDatalogGuard() Guard {
-	sp := new(subprinPrim)
+	sp := &subprinPrim{max: 1}
 	sp.SetArity(3)
 	eng := dlengine.NewEngine()
 	eng.AddPred(sp)
-	return &DatalogGuard{dl: eng}
+	return &DatalogGuard{dl: eng, sp: sp}
 }
 
 // NewDatalogGuardFromConfig returns a new datalog guard that uses a signed,
@@ -239,11 +246,11 @@ func NewDatalogGuardFromConfig(verifier *Verifier, config DatalogGuardDetails) (
 // NewDatalogGuard returns a new datalog guard without configuring a rules
 // file.
 func NewDatalogGuard(verifier *Verifier) *DatalogGuard {
-	sp := new(subprinPrim)
+	sp := &subprinPrim{max: 1}
 	sp.SetArity(3)
 	eng := dlengine.NewEngine()
 	eng.AddPred(sp)
-	dg := &DatalogGuard{Key: verifier, dl: eng}
+	dg := &DatalogGuard{Key: verifier, dl: eng, sp: sp}
 	dg.Config.SignedRulesPath = nil
 	return dg
 }
@@ -252,7 +259,12 @@ func NewDatalogGuard(verifier *Verifier) *DatalogGuard {
 // DatalogGuard(<key>) for persistent guards.
 func (g *DatalogGuard) Subprincipal() auth.SubPrin {
 	if g.Key == nil {
-		e := auth.PrinExt{Name: "DatalogGuard"}
+		rules, err := proto.Marshal(&g.db)
+		if err != nil {
+			return nil
+		}
+		hash := sha256.Sum256(rules)
+		e := auth.PrinExt{Name: "DatalogGuard", Arg: []auth.Term{auth.Bytes(hash[:])}}
 		return auth.SubPrin{e}
 	}
 	e := auth.PrinExt{Name: "DatalogGuard", Arg: []auth.Term{g.Key.ToPrincipal()}}
@@ -430,7 +442,7 @@ func checkTermVarUsage(vars []string, unusedVars *[]string, e ...auth.Term) erro
 			}
 			setRemove(unusedVars, e.String())
 		case auth.Prin:
-			err := checkTermVarUsage(vars, unusedVars, e.Key)
+			err := checkTermVarUsage(vars, unusedVars, e.KeyHash)
 			if err != nil {
 				return err
 			}
@@ -441,7 +453,7 @@ func checkTermVarUsage(vars []string, unusedVars *[]string, e ...auth.Term) erro
 				}
 			}
 		case *auth.Prin:
-			err := checkTermVarUsage(vars, unusedVars, e.Key)
+			err := checkTermVarUsage(vars, unusedVars, e.KeyHash)
 			if err != nil {
 				return err
 			}
@@ -618,7 +630,120 @@ func (g *DatalogGuard) retract(f auth.Form) error {
 	return nil
 }
 
+func max(x, y int) int {
+	if x > y {
+		return x
+	}
+	return y
+}
+
+// Figure out the max length of a principal in a term, where the length of a
+// principal is one more than the length of the extensions of the principal.
+func getMaxTermLength(t auth.Term) int {
+	if t == nil {
+		return 0
+	}
+
+	switch t.(type) {
+	case auth.Prin:
+		// TODO(tmroeder): this and the next case are not fully
+		// general, since there might be an Arg that has a longer
+		// principal.
+		return 1 + len(t.(auth.Prin).Ext)
+	case *auth.Prin:
+		return 1 + len(t.(*auth.Prin).Ext)
+	case auth.PrinTail:
+		return len(t.(auth.PrinTail).Ext)
+	case *auth.PrinTail:
+		return len(t.(*auth.PrinTail).Ext)
+	case auth.Str, auth.Bytes, auth.Int, auth.TermVar:
+		return 0
+	default:
+		return 0
+	}
+}
+
+// Figure out the max length of a principal in a form, where the length of a
+// principal is one more than the length of the extensions of the principal.
+func getMaxFormLength(f auth.Form) int {
+	if f == nil {
+		return 0
+	}
+
+	m := 0
+	switch f.(type) {
+	case auth.Pred:
+		for _, t := range f.(auth.Pred).Arg {
+			m = max(m, getMaxTermLength(t))
+		}
+	case *auth.Pred:
+		for _, t := range f.(*auth.Pred).Arg {
+			m = max(m, getMaxTermLength(t))
+		}
+	case auth.Const, *auth.Const:
+		return 0
+	case auth.Not:
+		return getMaxFormLength(f.(auth.Not).Negand)
+	case *auth.Not:
+		return getMaxFormLength(f.(*auth.Not).Negand)
+	case auth.And:
+		for _, c := range f.(auth.And).Conjunct {
+			m = max(m, getMaxFormLength(c))
+		}
+	case *auth.And:
+		for _, c := range f.(*auth.And).Conjunct {
+			m = max(m, getMaxFormLength(c))
+		}
+	case auth.Or:
+		for _, d := range f.(auth.Or).Disjunct {
+			m = max(m, getMaxFormLength(d))
+		}
+	case *auth.Or:
+		for _, d := range f.(*auth.Or).Disjunct {
+			m = max(m, getMaxFormLength(d))
+		}
+	case auth.Implies:
+		first := getMaxFormLength(f.(auth.Implies).Antecedent)
+		second := getMaxFormLength(f.(auth.Implies).Consequent)
+		return max(first, second)
+	case *auth.Implies:
+		first := getMaxFormLength(f.(*auth.Implies).Antecedent)
+		second := getMaxFormLength(f.(*auth.Implies).Consequent)
+		return max(first, second)
+	case auth.Speaksfor:
+		first := getMaxTermLength(f.(auth.Speaksfor).Delegate)
+		second := getMaxTermLength(f.(auth.Speaksfor).Delegator)
+		return max(first, second)
+	case *auth.Speaksfor:
+		first := getMaxTermLength(f.(*auth.Speaksfor).Delegate)
+		second := getMaxTermLength(f.(*auth.Speaksfor).Delegator)
+		return max(first, second)
+	case auth.Says:
+		sl := getMaxTermLength(f.(auth.Says).Speaker)
+		ml := getMaxFormLength(f.(auth.Says).Message)
+		return max(sl, ml)
+	case *auth.Says:
+		sl := getMaxTermLength(f.(*auth.Says).Speaker)
+		ml := getMaxFormLength(f.(*auth.Says).Message)
+		return max(sl, ml)
+	case auth.Forall:
+		return getMaxFormLength(f.(auth.Forall).Body)
+	case *auth.Forall:
+		return getMaxFormLength(f.(*auth.Forall).Body)
+	case auth.Exists:
+		return getMaxFormLength(f.(auth.Exists).Body)
+	case *auth.Exists:
+		return getMaxFormLength(f.(*auth.Exists).Body)
+	default:
+		return 0
+	}
+
+	return m
+}
+
 func (g *DatalogGuard) query(f auth.Form) (bool, error) {
+	g.sp.max = getMaxFormLength(f)
+
 	q, err := g.stmtToDatalog(f, nil, nil)
 	if err != nil {
 		return false, err
@@ -699,6 +824,7 @@ func (g *DatalogGuard) Query(query string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
+
 	return g.query(r.Form)
 }
 

@@ -1,0 +1,5 @@
+Fix static auth strings
+Cert chain verify
+Replace DebugString as hashed object representing program request
+
+

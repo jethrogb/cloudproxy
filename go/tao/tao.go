@@ -78,7 +78,7 @@ type Tao interface {
 	// optional issuer, time and expiration will be given default values if nil.
 	// TODO(kwalsh) Maybe create a struct for these optional params? Or use
 	// auth.Says instead (in which time and expiration are optional) with a
-	// bogus Speaker field like key("") or nil("") or self, etc.
+	// bogus Speaker field like key([]) or nil([]) or self, etc.
 	Attest(issuer *auth.Prin, time, expiration *int64, message auth.Form) (*Attestation, error)
 
 	// Seal encrypts data so only certain hosted programs can unseal it.
@@ -87,11 +87,58 @@ type Tao interface {
 	// Unseal decrypts data that has been sealed by the Seal() operation, but only
 	// if the policy specified during the Seal() operation is satisfied.
 	Unseal(sealed []byte) (data []byte, policy string, err error)
+
+	// InitCounter initializes a counter with given label.
+	InitCounter(label string, c int64) error
+
+	// GetCounter retrieves a counter with given label.
+	GetCounter(label string) (int64, error)
+
+	// RollbackProtectedSeal encrypts data under rollback protection
+	// so only certain hosted programs can unseal it.
+	RollbackProtectedSeal(label string, data []byte, policy string) ([]byte, error)
+
+	// RollbackProtectedUnseal decrypts data under rollback protection.
+	RollbackProtectedUnseal(sealed []byte) ([]byte, string, error)
 }
 
-// Cached interface to the host Tao underlying this hosted program.
+// Crypto Suite
+// 	Each Library is associated with exactly one cipher suite that describes
+// 	seal/unseal, hmac, public key and key derivation algorithms.  The original
+// 	default was AES-128-CTR-ECC-P256-SHA-256-HMAC-SHA-256.
+//
+// Supported crypto suites
+//	Basic256BitCipherSuite is the USG "Top Secret" suite.  See
+// 	https://www.iad.gov/iad/programs/iad-initiatives/cnsa-suite.cfm.
+const (
+	Basic128BitCipherSuite = "sign:ecdsap256,crypt:aes128-ctr-hmacsha256,derive:hdkf-sha256"
+	Basic192BitCipherSuite = "sign:ecdsap384,crypt:aes256-ctr-hmacsha384,derive:hdkf-sha256"
+	Basic256BitCipherSuite = "sign:ecdsap521,crypt:aes256-ctr-hmacsha512,derive:hdkf-sha256"
+)
+// The following variable, defined in "tao_cipher_suite.go," selects the cipher suite.
+// var TaoCryptoSuite = Basic128BitCipherSuite
+
+// The following variables are accessible within the tao package so they can be
+// accessed by the functions that manage the Tao parent singleton object.
+
+// cachedHost is a singleton parent Tao instance.
 var cachedHost Tao
+
+// cacheOnce protects the creation of the singleton cachedHost.
 var cacheOnce sync.Once
+
+// registryLock protects Tao host-channel registry operations.
+var registryLock sync.RWMutex
+
+// registry stores methods that create an instance of the Tao for a given name.
+var registry = map[string]func(string) (Tao, error){}
+
+// Register adds a Tao-creation function for a given host channel type.
+func Register(name string, generator func(string) (Tao, error)) {
+	registryLock.Lock()
+	registry[name] = generator
+	registryLock.Unlock()
+}
 
 // ParentFromConfig gets a parent Tao given a Config that specifies the Tao
 // type.
@@ -103,13 +150,24 @@ func ParentFromConfig(tc Config) Tao {
 		// The incoming config overrides the environment variables for
 		// any values that are set in it.
 		tcEnv.Merge(tc)
+
 		switch tcEnv.HostChannelType {
-		case TPM:
+		case "tpm":
 			aikblob, err := ioutil.ReadFile(tcEnv.TPMAIKPath)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Couldn't read the aikblob: %s\n", err)
 				glog.Error(err)
 				return
+			}
+
+			var aikCert []byte
+			if tcEnv.TPMAIKCertPath != "" {
+				aikCert, err = ioutil.ReadFile(tcEnv.TPMAIKCertPath)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Couldn't read the aik cert: %s\n", err)
+					glog.Error(err)
+					return
+				}
 			}
 
 			taoPCRs := tcEnv.TPMPCRs
@@ -130,7 +188,7 @@ func ParentFromConfig(tc Config) Tao {
 				}
 			}
 
-			host, err := NewTPMTao(tcEnv.TPMDevice, aikblob, pcrs)
+			host, err := NewTPMTao(tcEnv.TPMDevice, aikblob, pcrs, aikCert)
 			if err != nil {
 				fmt.Fprintf(os.Stderr, "Couldn't create a new TPMTao: %s\n", err)
 				glog.Error(err)
@@ -138,21 +196,48 @@ func ParentFromConfig(tc Config) Tao {
 			}
 
 			cachedHost = host
-		case Pipe:
+		case "tpm2":
+			taoPCRs := tcEnv.TPM2PCRs
+			pcrStr := strings.TrimPrefix(taoPCRs, "PCRs(\"")
+
+			// This index operation will never panic, since strings.Split always
+			// returns at least one entry in the resulting slice.
+			pcrIntList := strings.Split(pcrStr, "\", \"")[0]
+			pcrInts := strings.Split(pcrIntList, ",")
+			pcrs := make([]int, len(pcrInts))
+			for i, s := range pcrInts {
+				var err error
+				pcrs[i], err = strconv.Atoi(s)
+				if err != nil {
+					fmt.Fprintf(os.Stderr, "Couldn't split the PCRs: %s\n", err)
+					glog.Error(err)
+					return
+				}
+			}
+
+			fmt.Fprintf(os.Stderr, "Info dir is %s\n", tc.TPM2InfoDir)
+			host, err := NewTPM2Tao(tcEnv.TPM2Device, tc.TPM2InfoDir, pcrs)
+			if err != nil {
+				fmt.Fprintf(os.Stderr, "Couldn't create a new TPM2Tao: %s\n", err)
+				glog.Error(err)
+				return
+			}
+			cachedHost = host
+		case "pipe":
 			host, err := DeserializeRPC(tcEnv.HostSpec)
 			if err != nil {
 				glog.Error(err)
 				return
 			}
 			cachedHost = host
-		case File:
+		case "file":
 			host, err := DeserializeFileRPC(tcEnv.HostSpec)
 			if err != nil {
 				glog.Error(err)
 				return
 			}
 			cachedHost = host
-		case Unix:
+		case "unix":
 			host, err := DeserializeUnixSocketRPC(tcEnv.HostSpec)
 			if err != nil {
 				glog.Error(err)
@@ -160,7 +245,22 @@ func ParentFromConfig(tc Config) Tao {
 			}
 			cachedHost = host
 		default:
-			glog.Errorf("unknown host tao channel type '%d'\n", tcEnv.HostChannelType)
+			// Look in the registry to see if there is a function
+			// that can produce a Tao instance for this host spec
+			// and name.
+			registryLock.RLock()
+			defer registryLock.RUnlock()
+			f := registry[tcEnv.HostChannelType]
+			if f == nil {
+				glog.Errorf("unknown host tao channel type %q", tcEnv.HostChannelType)
+			}
+
+			host, err := f(tcEnv.HostSpec)
+			if err != nil {
+				glog.Error(err)
+				return
+			}
+			cachedHost = host
 		}
 
 	})

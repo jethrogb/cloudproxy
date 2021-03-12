@@ -52,8 +52,9 @@ func makeDatalogGuard() (*DatalogGuard, *Keys, string, error) {
 	return g, keys, tmpdir, nil
 }
 
-var subj = auth.NewKeyPrin([]byte("test1"))
-var subj2 = auth.NewKeyPrin([]byte("test2"))
+var subj = auth.NewKeyPrin([]byte("test1"))  // key([1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014])
+var subj2 = auth.NewKeyPrin([]byte("test2")) // key([60303ae22b998861bce3b28f33eec1be758a213c86c93c076dbe9f558c11c752])
+
 
 func TestDatalogSaveReload(t *testing.T) {
 	g, keys, tmpdir, err := makeDatalogGuard()
@@ -84,8 +85,8 @@ func TestDatalogSaveReload(t *testing.T) {
 	if g.RuleCount() != 2 {
 		t.Fatal("wrong number of rules")
 	}
-	if g.GetRule(1) != `Authorized(key([7465737431]), "read", "somefile")` {
-		t.Fatalf("wrong rule: %s", g.GetRule(0))
+	if g.GetRule(1) != `Authorized(key([1b4f0e9851971998e732078544c96b36c3d01cedf7caa332359d6f1d83567014]), "read", "somefile")` {
+		t.Fatalf("wrong rule: %s", g.GetRule(1))
 	}
 }
 
@@ -129,7 +130,7 @@ func TestDatalogRules(t *testing.T) {
 	}
 	defer os.RemoveAll(tmpdir)
 
-	err = g.AddRule(fmt.Sprintf(`(forall F: IsFile(F) implies Authorized(%s, "read", F))`, subj))
+	err = g.AddRule(fmt.Sprintf(`(forall F: IsFile(F) implies Authorized(%v, "read", F))`, subj))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -185,8 +186,8 @@ func TestDatalogSimpleTranslation(t *testing.T) {
 	}
 
 	kprin := auth.Prin{
-		Type: "key",
-		Key:  auth.Bytes([]byte{0x70}),
+		Type:    "key",
+		KeyHash: auth.Bytes([]byte{0x70}),
 	}
 	if !g.IsAuthorized(kprin, "Execute", nil) {
 		t.Fatal("Simple authorization check failed")
@@ -234,8 +235,8 @@ func TestDatalogSubprin(t *testing.T) {
 	}
 
 	pprin := auth.Prin{
-		Type: "key",
-		Key:  auth.Bytes([]byte{0x70}),
+		Type:    "key",
+		KeyHash: auth.Bytes([]byte{0x70}),
 		Ext: []auth.PrinExt{
 			auth.PrinExt{
 				Name: "Hash",
@@ -245,5 +246,129 @@ func TestDatalogSubprin(t *testing.T) {
 	}
 	if !g.IsAuthorized(pprin, "Execute", nil) {
 		t.Fatal("Subprin authorization check failed")
+	}
+}
+
+var datalogFormLengthChecks = []struct {
+	query  string
+	length int
+}{
+	{"P(key([70]).Program([71]))", 2},
+	{"not P(key([70]).Program([71]))", 2},
+	{"P()", 0},
+	{"P() and Q(key([70]).Program([71]))", 2},
+	{"P() or Q(key([70]).Program([71]))", 2},
+	{"P(key([70]).Program([71])) and Q(key([70]).Program([71]))", 2},
+	{"P(key([70]).Program([71]).N([72])) and Q(key([70]).Program([71]))", 3},
+	{"P() implies Q(key([70]).Program([71]))", 2},
+	{"tpm([70]) speaksfor key([70]).Program([71])", 2},
+	{"tpm([70]).PCRs(\"17,18\", \"a4c7,b876\") says key([72]) speaksfor key([73]).A(\"B\").C()", 3},
+	{"forall X: forall Y: TPM(X) and TrustedHost(Y) implies M(key([70]))", 1},
+	{"exists X: P(X)", 0},
+	{"exists X: P(X, key([71]).P())", 2},
+}
+
+func TestDatalogMaxFormLength(t *testing.T) {
+	for _, v := range datalogFormLengthChecks {
+		var form auth.AnyForm
+		if fmt.Sscanf("("+v.query+")", "%v", &form); form.Form == nil {
+			t.Errorf("fmt.Sscanf(%q) failed", v.query)
+		}
+		l := getMaxFormLength(form.Form)
+		if l != v.length {
+			t.Errorf("%q had length %d, want %d", v.query, l, v.length)
+		}
+	}
+}
+
+var datalogTermLengthChecks = []struct {
+	query  string
+	length int
+}{
+	{"5", 0},
+	{"\"a string\"", 0},
+	{"[716475a8e3]", 0},
+	{"ext.Program([7154])", 1},
+	{"ext.P().Q().R().S().T()", 5},
+	{"key([70]).Program([71])", 2},
+}
+
+func TestDatalogMaxTermLength(t *testing.T) {
+	for _, v := range datalogTermLengthChecks {
+		var term auth.AnyTerm
+		if fmt.Sscanf(v.query, "%v", &term); term.Term == nil {
+			t.Errorf("fmt.Sscanf(%q) failed", v.query)
+		}
+		l := getMaxTermLength(term.Term)
+		if l != v.length {
+			t.Errorf("%q had length %d, want %d", v.query, l, v.length)
+		}
+	}
+}
+
+var datalogLoops = []string{
+	"(forall X: forall Y: forall P: A(X) and B(Y) and Subprin(P, X, Y) implies A(P))",
+	"(A(key([70])))",
+	"(B(ext.Hash([71])))",
+}
+
+var datalogLoopQueries = []struct {
+	query    string
+	expected bool
+}{
+	{"A(key([70]).Hash([71]))", true},
+	{"A(key([70]))", true},
+	{"A(key([70]).Hash([72]))", false},
+}
+
+func TestDatalogLoop(t *testing.T) {
+	g, key, tmpdir, err := makeDatalogGuard()
+	if err != nil {
+		t.Fatalf("makeDatalogGuard failed: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+	if err = g.Save(key.SigningKey); err != nil {
+		t.Fatalf("Failed to save DatalogGuard: %v", err)
+	}
+
+	for _, s := range datalogLoops {
+		if err := g.AddRule(s); err != nil {
+			t.Fatalf("Couldn't add rule '%s': %s", s, err)
+		}
+	}
+
+	for _, q := range datalogLoopQueries {
+		ok, err := g.Query(q.query)
+		if err != nil {
+			t.Errorf("Query(%q) failed: %v", q.query, err)
+		}
+		if ok != q.expected {
+			t.Errorf("Query(%q) = %t; want %t", q.query, ok, q.expected)
+		}
+	}
+}
+
+func TestDatalogSignedSubprincipal(t *testing.T) {
+	g, key, tmpdir, err := makeDatalogGuard()
+	if err != nil {
+		t.Fatalf("makeDatalogGuard failed: %v", err)
+	}
+	defer os.RemoveAll(tmpdir)
+	name := g.Subprincipal().String()
+	k := key.SigningKey.ToPrincipal().String()
+	if name != ".DatalogGuard("+k+")" {
+		t.Fatalf("Datalog guard has wrong name: %v", name)
+	}
+}
+
+func TestDatalogUnsignedSubprincipal(t *testing.T) {
+	g := NewTemporaryDatalogGuard()
+	err := g.Authorize(subj, "read", []string{"somefile"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	name := g.Subprincipal().String()
+	if name != ".DatalogGuard([289de2090f7354a8effd50428d9fa56b869cb9f67f002de5e5ebe7d3caa0e931])" {
+		t.Fatalf("Datalog guard has wrong name: %v", name)
 	}
 }

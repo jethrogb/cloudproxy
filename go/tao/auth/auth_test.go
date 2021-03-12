@@ -30,6 +30,7 @@ var key = []string{
 }
 
 var termtests = []string{
+	`bogus([face])`,
 	"42",
 	"0",
 	"-1",
@@ -98,7 +99,7 @@ func TestBinaryTerm(t *testing.T) {
 		buf := Marshal(f)
 		g, err := UnmarshalTerm(buf)
 		if err != nil {
-			t.Fatalf("can't unmarshal: %s", s)
+			t.Fatalf("can't unmarshal %s: %v", s, err)
 		}
 		if f.String() != g.String() {
 			t.Fatalf("bad binary: %s vs %s", f.String(), g.String())
@@ -130,7 +131,7 @@ func TestScanTerm(t *testing.T) {
 	if err != nil {
 		t.Fatal(err.Error())
 	}
-	p2 := Prin{Type: "key", Key: Bytes([]byte("abc")), Ext: SubPrin{
+	p2 := Prin{Type: "key", KeyHash: Bytes([]byte("abc")), Ext: SubPrin{
 		PrinExt{"A", []Term{Int(1)}},
 		PrinExt{"B", []Term{Str("2"), Str("#")}},
 	}}
@@ -402,7 +403,7 @@ func TestMakePredicate(t *testing.T) {
 		ptest{"Foo", nil, "Foo()"},
 		ptest{"Foo", []interface{}{}, "Foo()"},
 		ptest{"Foo", []interface{}{1, 2, 3}, "Foo(1, 2, 3)"},
-		ptest{"Foo", []interface{}{"a", 2, Prin{Type: "key", Key: Bytes([]byte("abc"))}}, `Foo("a", 2, key([616263]))`},
+		ptest{"Foo", []interface{}{"a", 2, Prin{Type: "key", KeyHash: Bytes([]byte("abc"))}}, `Foo("a", 2, key([616263]))`},
 		ptest{"Foo", []interface{}{3.14, testStringer(false), true}, `Foo("3.14", "test", "true")`},
 	}
 
